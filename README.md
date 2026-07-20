@@ -106,107 +106,210 @@ nano ~/.ssh/authorized_keys
 
 ```groovy
 pipeline {
+
     agent any
+
     
+
     environment {
+
         // Source Parameter Layout
-        GITHUB_REPO     = "[github.com/aguilarchrstn/monolithic-litchat.git](https://github.com/aguilarchrstn/monolithic-litchat.git)"
+
+        GITHUB_REPO     = "github.com/aguilarchrstn/monolithic-litchat.git"
+
         REGISTRY_TAG    = "myregistry.local/your-app:${BUILD_NUMBER}"
+
         
+
         // Target Test Server Network Matrix
+
         TEST_SERVER_IP  = "10.0.1.222"  // Input your Test AWS VPC Private IP
+
         SSH_CRED_ID     = "ec2-deployer-key"
+
     }
+
     
+
     stages {
+
         stage('🚀 Code Checkout') {
+
             steps {
+
                 // Ensure 'github-token-id' matches the credentials ID you saved in Jenkins for GitHub
+
                 git branch: 'main', credentialsId: 'github-token-id', url: "https://${GITHUB_REPO}"
+
             }
+
         }
+
+
 
      stage('📋 Source Quality & SBOM') {
+
                 steps {
+
                     echo "Downloading Syft and generating Software Bill of Materials (SBOM)..."
+
                     sh """
-                        curl -sSfL [https://raw.githubusercontent.com/anchore/syft/main/install.sh](https://raw.githubusercontent.com/anchore/syft/main/install.sh) | sh -s -- -b ./bin
+
+                        curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b ./bin
+
                         ./bin/syft dir:. --output spdx-json=sbom.json
+
                     """
+
                     archiveArtifacts artifacts: 'sbom.json', fingerprint: true
+
                 }
+
             }
+
+
 
         stage('🛡️ SAST Scan') {
+
                     steps {
+
                         echo "Downloading valid Trivy release and running SAST..."
+
                         sh """
+
                             mkdir -p ./bin
+
                             
+
                             if [ ! -f ./bin/trivy ]; then
+
                                 echo "Fetching Trivy static binary..."
+
                                 # Updated to a valid, active release version (v0.72.0)
-                                curl -Lo trivy.tar.gz [https://github.com/aquasecurity/trivy/releases/download/v0.72.0/trivy_0.72.0_Linux-64bit.tar.gz](https://github.com/aquasecurity/trivy/releases/download/v0.72.0/trivy_0.72.0_Linux-64bit.tar.gz)
+
+                                curl -Lo trivy.tar.gz https://github.com/aquasecurity/trivy/releases/download/v0.72.0/trivy_0.72.0_Linux-64bit.tar.gz
+
                                 tar -xzf trivy.tar.gz -C ./bin trivy
+
                                 rm trivy.tar.gz
+
                                 chmod +x ./bin/trivy
+
                             fi
+
                             
+
                             ./bin/trivy fs --scanners vuln,secret,config .
+
                         """
-                    }
+
+            }
+
         }
+
+
 
         stage('🔍 Dockerfile Scan') {
+
                     steps {
+
                         echo "Auditing Dockerfile via Trivy Binary..."
+
                         sh """
+
                             # 1. Ensure we are using the stable binary we already downloaded in the SAST stage
+
                             # 2. Point Trivy directly to the litchat directory path where the Dockerfile lives
+
                             ./bin/trivy config litchat/Dockerfile
+
                         """
-                    }
+
+            }
+
         }
+
+
 
     stage('📦 Build Image') {
+
                 steps {
+
                     echo "Compiling image configuration layers using litchat context..."
+
                     // Pointing the context directly to the application directory
+
                     sh "docker build -t ${REGISTRY_TAG} ./litchat"
-                }
+
+            }
+
         }
 
+
+
         stage('🔒 Container Vulnerability Scan') {
+
             steps {
+
                 echo "Auditing built image via Trivy..."
+
                 // Image scans don't need local file mounts, so running via Docker here works perfectly!
+
                 sh "docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image ${REGISTRY_TAG}"
+
             }
+
         }
+
         stage('🌐 Deploy to TEST') {
+
                     steps {
+
                         sshagent([SSH_CRED_ID]) {
+
                             echo "Deploying updates to LitChat Test Environment..."
+
                             sh """
+
                                 # Changed 'jenkins_deployer' to the default native 'ubuntu' user
+
                                 ssh -o StrictHostKeyChecking=no ubuntu@${TEST_SERVER_IP} "
+
                                     cd /home/ubuntu/test/monolithic-litchat/litchat && \
+
                                     git pull origin main || true && \
+
                                     docker compose -p litchat-test up -d --build
+
                                 "
+
                             """
-                        }
+
+                }
+
             }
+
         }
+
     }
+
     
+
     post {
+
         always {
+
             echo "Pipeline Run Complete. Sanitizing system workspace cache structures..."
+
             cleanWs()
+
         }
+
     }
-}
+
+} 
+
+
 
 ```
 
@@ -214,107 +317,210 @@ pipeline {
 
 ```groovy
 pipeline {
+
     agent any
+
     
+
     environment {
+
         // Source Parameter Layout
-        GITHUB_REPO     = "[github.com/aguilarchrstn/monolithic-litchat.git](https://github.com/aguilarchrstn/monolithic-litchat.git)"
+
+        GITHUB_REPO     = "github.com/aguilarchrstn/monolithic-litchat.git"
+
         REGISTRY_TAG    = "myregistry.local/your-app:${BUILD_NUMBER}"
+
         
+
         // Target Test Server Network Matrix
+
         TEST_SERVER_IP  = "10.0.1.222"  // Input your Test AWS VPC Private IP
+
         SSH_CRED_ID     = "ec2-deployer-key"
+
     }
+
     
+
     stages {
+
         stage('🚀 Code Checkout') {
+
             steps {
+
                 // Ensure 'github-token-id' matches the credentials ID you saved in Jenkins for GitHub
+
                 git branch: 'staging', credentialsId: 'github-token-id', url: "https://${GITHUB_REPO}"
+
             }
+
         }
+
+
 
      stage('📋 Source Quality & SBOM') {
+
                 steps {
+
                     echo "Downloading Syft and generating Software Bill of Materials (SBOM)..."
+
                     sh """
-                        curl -sSfL [https://raw.githubusercontent.com/anchore/syft/main/install.sh](https://raw.githubusercontent.com/anchore/syft/main/install.sh) | sh -s -- -b ./bin
+
+                        curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b ./bin
+
                         ./bin/syft dir:. --output spdx-json=sbom.json
+
                     """
+
                     archiveArtifacts artifacts: 'sbom.json', fingerprint: true
+
                 }
+
             }
+
+
 
         stage('🛡️ SAST Scan') {
+
                     steps {
+
                         echo "Downloading valid Trivy release and running SAST..."
+
                         sh """
+
                             mkdir -p ./bin
+
                             
+
                             if [ ! -f ./bin/trivy ]; then
+
                                 echo "Fetching Trivy static binary..."
+
                                 # Updated to a valid, active release version (v0.72.0)
-                                curl -Lo trivy.tar.gz [https://github.com/aquasecurity/trivy/releases/download/v0.72.0/trivy_0.72.0_Linux-64bit.tar.gz](https://github.com/aquasecurity/trivy/releases/download/v0.72.0/trivy_0.72.0_Linux-64bit.tar.gz)
+
+                                curl -Lo trivy.tar.gz https://github.com/aquasecurity/trivy/releases/download/v0.72.0/trivy_0.72.0_Linux-64bit.tar.gz
+
                                 tar -xzf trivy.tar.gz -C ./bin trivy
+
                                 rm trivy.tar.gz
+
                                 chmod +x ./bin/trivy
+
                             fi
+
                             
+
                             ./bin/trivy fs --scanners vuln,secret,config .
+
                         """
-                    }
+
+            }
+
         }
+
+
 
         stage('🔍 Dockerfile Scan') {
+
                     steps {
+
                         echo "Auditing Dockerfile via Trivy Binary..."
+
                         sh """
+
                             # 1. Ensure we are using the stable binary we already downloaded in the SAST stage
+
                             # 2. Point Trivy directly to the litchat directory path where the Dockerfile lives
+
                             ./bin/trivy config litchat/Dockerfile
+
                         """
-                    }
+
+            }
+
         }
+
+
 
     stage('📦 Build Image') {
+
                 steps {
+
                     echo "Compiling image configuration layers using litchat context..."
+
                     // Pointing the context directly to the application directory
+
                     sh "docker build -t ${REGISTRY_TAG} ./litchat"
-                }
+
+            }
+
         }
 
+
+
         stage('🔒 Container Vulnerability Scan') {
+
             steps {
+
                 echo "Auditing built image via Trivy..."
+
                 // Image scans don't need local file mounts, so running via Docker here works perfectly!
+
                 sh "docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image ${REGISTRY_TAG}"
+
             }
+
         }
+
         stage('🌐 Deploy to Staging') {
+
                     steps {
+
                         sshagent([SSH_CRED_ID]) {
+
                             echo "Deploying updates to LitChat Staging Environment..."
+
                             sh """
+
                                 # Changed 'jenkins_deployer' to the default native 'ubuntu' user
+
                                 ssh -o StrictHostKeyChecking=no ubuntu@${TEST_SERVER_IP} "
+
                                     cd /home/ubuntu/staging/monolithic-litchat/litchat && \
+
                                     git pull origin staging || true && \
+
                                     docker compose -p litchat-staging up -d --build
+
                                 "
+
                             """
-                        }
+
+                }
+
             }
+
         }
+
     }
+
     
+
     post {
+
         always {
+
             echo "Pipeline Run Complete. Sanitizing system workspace cache structures..."
+
             cleanWs()
+
         }
+
     }
-}
+
+} 
+
+
 
 ```
 
@@ -322,107 +528,209 @@ pipeline {
 
 ```groovy
 pipeline {
+
     agent any
+
     
+
     environment {
+
         // Source Parameter Layout
-        GITHUB_REPO     = "[github.com/aguilarchrstn/monolithic-litchat.git](https://github.com/aguilarchrstn/monolithic-litchat.git)"
+
+        GITHUB_REPO     = "github.com/aguilarchrstn/monolithic-litchat.git"
+
         REGISTRY_TAG    = "myregistry.local/your-app:${BUILD_NUMBER}"
+
         
+
         // Target Test Server Network Matrix
+
         TEST_SERVER_IP  = "10.0.1.39"  // Input your Test AWS VPC Private IP
+
         SSH_CRED_ID     = "ec2-deployer-key"
+
     }
+
     
+
     stages {
+
         stage('🚀 Code Checkout') {
+
             steps {
+
                 // Ensure 'github-token-id' matches the credentials ID you saved in Jenkins for GitHub
+
                 git branch: 'prod', credentialsId: 'github-token-id', url: "https://${GITHUB_REPO}"
+
             }
+
         }
+
+
 
      stage('📋 Source Quality & SBOM') {
+
                 steps {
+
                     echo "Downloading Syft and generating Software Bill of Materials (SBOM)..."
+
                     sh """
-                        curl -sSfL [https://raw.githubusercontent.com/anchore/syft/main/install.sh](https://raw.githubusercontent.com/anchore/syft/main/install.sh) | sh -s -- -b ./bin
+
+                        curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b ./bin
+
                         ./bin/syft dir:. --output spdx-json=sbom.json
+
                     """
+
                     archiveArtifacts artifacts: 'sbom.json', fingerprint: true
+
                 }
+
             }
+
+
 
         stage('🛡️ SAST Scan') {
+
                     steps {
+
                         echo "Downloading valid Trivy release and running SAST..."
+
                         sh """
+
                             mkdir -p ./bin
+
                             
+
                             if [ ! -f ./bin/trivy ]; then
+
                                 echo "Fetching Trivy static binary..."
+
                                 # Updated to a valid, active release version (v0.72.0)
-                                curl -Lo trivy.tar.gz [https://github.com/aquasecurity/trivy/releases/download/v0.72.0/trivy_0.72.0_Linux-64bit.tar.gz](https://github.com/aquasecurity/trivy/releases/download/v0.72.0/trivy_0.72.0_Linux-64bit.tar.gz)
+
+                                curl -Lo trivy.tar.gz https://github.com/aquasecurity/trivy/releases/download/v0.72.0/trivy_0.72.0_Linux-64bit.tar.gz
+
                                 tar -xzf trivy.tar.gz -C ./bin trivy
+
                                 rm trivy.tar.gz
+
                                 chmod +x ./bin/trivy
+
                             fi
+
                             
+
                             ./bin/trivy fs --scanners vuln,secret,config .
+
                         """
-                    }
+
+            }
+
         }
+
+
 
         stage('🔍 Dockerfile Scan') {
+
                     steps {
+
                         echo "Auditing Dockerfile via Trivy Binary..."
+
                         sh """
+
                             # 1. Ensure we are using the stable binary we already downloaded in the SAST stage
+
                             # 2. Point Trivy directly to the litchat directory path where the Dockerfile lives
+
                             ./bin/trivy config litchat/Dockerfile
+
                         """
-                    }
+
+            }
+
         }
+
+
 
     stage('📦 Build Image') {
+
                 steps {
+
                     echo "Compiling image configuration layers using litchat context..."
+
                     // Pointing the context directly to the application directory
+
                     sh "docker build -t ${REGISTRY_TAG} ./litchat"
-                }
+
+            }
+
         }
 
+
+
         stage('🔒 Container Vulnerability Scan') {
+
             steps {
+
                 echo "Auditing built image via Trivy..."
+
                 // Image scans don't need local file mounts, so running via Docker here works perfectly!
+
                 sh "docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image ${REGISTRY_TAG}"
+
             }
+
         }
+
         stage('🌐 Deploy to Prodution') {
+
                     steps {
+
                         sshagent([SSH_CRED_ID]) {
+
                             echo "Deploying updates to LitChat Prodution Environment..."
+
                             sh """
+
                                 # Changed 'jenkins_deployer' to the default native 'ubuntu' user
+
                                 ssh -o StrictHostKeyChecking=no ubuntu@${TEST_SERVER_IP} "
+
                                     cd /home/ubuntu/prod/monolithic-litchat/litchat && \
+
                                     git pull origin prod || true && \
+
                                     docker compose -p litchat-prod up -d --build
+
                                 "
+
                             """
-                        }
+
+                }
+
             }
+
         }
+
     }
+
     
+
     post {
+
         always {
+
             echo "Pipeline Run Complete. Sanitizing system workspace cache structures..."
+
             cleanWs()
+
         }
+
     }
-}
+
+} 
+
 
 ```
 
