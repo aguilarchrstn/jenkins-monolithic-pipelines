@@ -1,7 +1,7 @@
 
 ---
 
-```markdown
+
 # 🚀 LitChat Multi-Tier CI/CD Pipeline Infrastructure Reference
 
 This repository houses the complete documentation, architecture mapping, and native Jenkinsfile pipeline definitions used to build, security-scan, and deploy **LitChat** across Test, Staging, and Production environments.
