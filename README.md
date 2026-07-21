@@ -106,227 +106,172 @@ nano ~/.ssh/authorized_keys
 
 ```groovy
 pipeline {
-
     agent any
 
-    
-
-    environment {
-
-        // Source Parameter Layout
-
-        GITHUB_REPO     = "github.com/aguilarchrstn/monolithic-litchat.git"
-
-        REGISTRY_TAG    = "myregistry.local/your-app:${BUILD_NUMBER}"
-
-        
-
-        // Target Test Server Network Matrix
-
-        TEST_SERVER_IP  = "10.0.1.222"  // Input your Test AWS VPC Private IP
-
-        SSH_CRED_ID     = "ec2-deployer-key"
-
+    parameters {
+        booleanParam(
+            name: 'PERFORM_ROLLBACK', 
+            defaultValue: false, 
+            description: 'Check this box to trigger an immediate rollback from the latest backup.'
+        )
     }
 
-    
+    environment {
+        GITHUB_REPO     = "github.com/aguilarchrstn/monolithic-litchat.git"
+        REGISTRY_TAG    = "myregistry.local/your-app:${BUILD_NUMBER}"
+        TEST_SERVER_IP  = "10.0.1.222"
+        SSH_CRED_ID     = "ec2-deployer-key"
+    }
 
     stages {
+        stage('🔄 Manual Rollback Execution') {
+            when { expression { params.PERFORM_ROLLBACK == true } }
+            steps {
+                sshagent([SSH_CRED_ID]) {
+                    echo "Rollback flag detected! Restoring target environment..."
+                    sh '''
+                        ssh -o StrictHostKeyChecking=no ubuntu@${TEST_SERVER_IP} '
+                            LATEST_BACKUP=$(ls -t /home/ubuntu/backups/litchat-backup-*.tar.gz 2>/dev/null | head -n 1)
+                            if [ -n "$LATEST_BACKUP" ]; then
+                                echo "Restoring from: $LATEST_BACKUP"
+                                cd /home/ubuntu/test/monolithic-litchat/litchat 2>/dev/null && docker compose -p litchat-test down || true
+                                tar -xzf "$LATEST_BACKUP" -C /home/ubuntu/test/
+                                cd /home/ubuntu/test/monolithic-litchat/litchat && docker compose -p litchat-test up -d --build
+                                echo "Rollback completed successfully!"
+                            else
+                                echo "Error: No backup archive found in /home/ubuntu/backups/"
+                                exit 1
+                            fi
+                        '
+                    '''
+                }
+            }
+        }
 
         stage('🚀 Code Checkout') {
-
+            when { expression { params.PERFORM_ROLLBACK == false } }
             steps {
-
-                // Ensure 'github-token-id' matches the credentials ID you saved in Jenkins for GitHub
-
                 git branch: 'main', credentialsId: 'github-token-id', url: "https://${GITHUB_REPO}"
-
             }
-
         }
 
-
-
-     stage('📋 Source Quality & SBOM') {
-
-                steps {
-
-                    echo "Downloading Syft and generating Software Bill of Materials (SBOM)..."
-
-                    sh """
-
-                        curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b ./bin
-
-                        ./bin/syft dir:. --output spdx-json=sbom.json
-
-                    """
-
-                    archiveArtifacts artifacts: 'sbom.json', fingerprint: true
-
-                }
-
+        stage('📋 Source Quality & SBOM') {
+            when { expression { params.PERFORM_ROLLBACK == false } }
+            steps {
+                echo "Downloading Syft and generating Software Bill of Materials (SBOM)..."
+                sh """
+                    curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b ./bin
+                    ./bin/syft dir:. --output spdx-json=sbom.json
+                """
+                archiveArtifacts artifacts: 'sbom.json', fingerprint: true
             }
-
-
+        }
 
         stage('🛡️ SAST Scan') {
-
-                    steps {
-
-                        echo "Downloading valid Trivy release and running SAST..."
-
-                        sh """
-
-                            mkdir -p ./bin
-
-                            
-
-                            if [ ! -f ./bin/trivy ]; then
-
-                                echo "Fetching Trivy static binary..."
-
-                                # Updated to a valid, active release version (v0.72.0)
-
-                                curl -Lo trivy.tar.gz https://github.com/aquasecurity/trivy/releases/download/v0.72.0/trivy_0.72.0_Linux-64bit.tar.gz
-
-                                tar -xzf trivy.tar.gz -C ./bin trivy
-
-                                rm trivy.tar.gz
-
-                                chmod +x ./bin/trivy
-
-                            fi
-
-                            
-
-                            ./bin/trivy fs --scanners vuln,secret,config .
-
-                        """
-
+            when { expression { params.PERFORM_ROLLBACK == false } }
+            steps {
+                echo "Downloading valid Trivy release and running SAST..."
+                sh """
+                    mkdir -p ./bin
+                    if [ ! -f ./bin/trivy ]; then
+                        curl -Lo trivy.tar.gz https://github.com/aquasecurity/trivy/releases/download/v0.72.0/trivy_0.72.0_Linux-64bit.tar.gz
+                        tar -xzf trivy.tar.gz -C ./bin trivy
+                        rm trivy.tar.gz
+                        chmod +x ./bin/trivy
+                    fi
+                    ./bin/trivy fs --scanners vuln,secret,config .
+                """
             }
-
         }
-
-
 
         stage('🔍 Dockerfile Scan') {
-
-                    steps {
-
-                        echo "Auditing Dockerfile via Trivy Binary..."
-
-                        sh """
-
-                            # 1. Ensure we are using the stable binary we already downloaded in the SAST stage
-
-                            # 2. Point Trivy directly to the litchat directory path where the Dockerfile lives
-
-                            ./bin/trivy config litchat/Dockerfile
-
-                        """
-
+            when { expression { params.PERFORM_ROLLBACK == false } }
+            steps {
+                echo "Auditing Dockerfile via Trivy Binary..."
+                sh "./bin/trivy config litchat/Dockerfile"
             }
-
         }
 
-
-
-    stage('📦 Build Image') {
-
-                steps {
-
-                    echo "Compiling image configuration layers using litchat context..."
-
-                    // Pointing the context directly to the application directory
-
-                    sh "docker build -t ${REGISTRY_TAG} ./litchat"
-
+        stage('📦 Build Image') {
+            when { expression { params.PERFORM_ROLLBACK == false } }
+            steps {
+                echo "Compiling image configuration layers..."
+                sh "docker build -t ${REGISTRY_TAG} ./litchat"
             }
-
         }
-
-
 
         stage('🔒 Container Vulnerability Scan') {
-
+            when { expression { params.PERFORM_ROLLBACK == false } }
             steps {
-
                 echo "Auditing built image via Trivy..."
-
-                // Image scans don't need local file mounts, so running via Docker here works perfectly!
-
                 sh "docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image ${REGISTRY_TAG}"
-
             }
-
         }
 
         stage('💾 Backup TEST Environment') {
-                    steps {
-                        sshagent([SSH_CRED_ID]) {
-                            echo "Creating timestamped backup of target environment before deployment..."
-                            sh '''
-                                ssh -o StrictHostKeyChecking=no ubuntu@${TEST_SERVER_IP} '
-                                    mkdir -p /home/ubuntu/backups && \
-                                    BACKUP_NAME="litchat-backup-$(date +%Y%m%d_%H%M%S).tar.gz" && \
-                                    if [ -d "/home/ubuntu/test/monolithic-litchat" ]; then
-                                        tar -czf /home/ubuntu/backups/${BACKUP_NAME} -C /home/ubuntu/test monolithic-litchat && \
-                                        echo "Backup created successfully: /home/ubuntu/backups/${BACKUP_NAME}"
-                                    else
-                                        echo "No existing deployment directory found to back up. Skipping."
-                                    fi
-                                '
-                            '''
-                        }
-            }
-        }
-        stage('🌐 Deploy to TEST') {
-
-                    steps {
-
-                        sshagent([SSH_CRED_ID]) {
-
-                            echo "Deploying updates to LitChat Test Environment..."
-
-                            sh """
-
-                                # Changed 'jenkins_deployer' to the default native 'ubuntu' user
-
-                                ssh -o StrictHostKeyChecking=no ubuntu@${TEST_SERVER_IP} "
-
-                                    cd /home/ubuntu/test/monolithic-litchat/litchat && \
-
-                                    git pull origin main || true && \
-
-                                    docker compose -p litchat-test up -d --build
-
-                                "
-
-                            """
-
+            when { expression { params.PERFORM_ROLLBACK == false } }
+            steps {
+                sshagent([SSH_CRED_ID]) {
+                    echo "Creating timestamped backup of target environment before deployment..."
+                    sh '''
+                        ssh -o StrictHostKeyChecking=no ubuntu@${TEST_SERVER_IP} '
+                            mkdir -p /home/ubuntu/backups && \
+                            BACKUP_NAME="litchat-backup-$(date +%Y%m%d_%H%M%S).tar.gz" && \
+                            if [ -d "/home/ubuntu/test/monolithic-litchat" ]; then
+                                tar -czf /home/ubuntu/backups/${BACKUP_NAME} -C /home/ubuntu/test monolithic-litchat && \
+                                echo "Backup created successfully: /home/ubuntu/backups/${BACKUP_NAME}"
+                            else
+                                echo "No existing deployment directory found to back up. Skipping."
+                            fi
+                        '
+                    '''
                 }
-
             }
-
         }
 
+        stage('🌐 Deploy to TEST') {
+            when { expression { params.PERFORM_ROLLBACK == false } }
+            steps {
+                sshagent([SSH_CRED_ID]) {
+                    echo "Deploying updates to LitChat Test Environment..."
+                    sh """
+                        ssh -o StrictHostKeyChecking=no ubuntu@${TEST_SERVER_IP} "
+                            cd /home/ubuntu/test/monolithic-litchat/litchat && \\
+                            git pull origin main || true && \\
+                            docker compose -p litchat-test up -d --build
+                        "
+                    """
+                }
+            }
+        }
     }
-
-    
 
     post {
-
-        always {
-
-            echo "Pipeline Run Complete. Sanitizing system workspace cache structures..."
-
-            cleanWs()
-
+        success {
+            script {
+                if (params.PERFORM_ROLLBACK == true) {
+                    currentBuild.displayName = "#${BUILD_NUMBER} - Rollback"
+                } else {
+                    currentBuild.displayName = "#${BUILD_NUMBER} - Deployed complete"
+                }
+            }
         }
-
+        aborted {
+            script {
+                currentBuild.displayName = "#${BUILD_NUMBER} - Cancelled"
+            }
+        }
+        failure {
+            script {
+                currentBuild.displayName = "#${BUILD_NUMBER} - Failed"
+            }
+        }
+        always {
+            echo "Pipeline Run Complete. Sanitizing workspace..."
+            cleanWs()
+        }
     }
-
-} 
+}
 
 ```
 
