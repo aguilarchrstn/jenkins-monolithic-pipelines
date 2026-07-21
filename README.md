@@ -261,6 +261,25 @@ pipeline {
 
         }
 
+        stage('💾 Backup TEST Environment') {
+                    steps {
+                        sshagent([SSH_CRED_ID]) {
+                            echo "Creating timestamped backup of target environment before deployment..."
+                            sh '''
+                                ssh -o StrictHostKeyChecking=no ubuntu@${TEST_SERVER_IP} '
+                                    mkdir -p /home/ubuntu/backups && \
+                                    BACKUP_NAME="litchat-backup-$(date +%Y%m%d_%H%M%S).tar.gz" && \
+                                    if [ -d "/home/ubuntu/test/monolithic-litchat" ]; then
+                                        tar -czf /home/ubuntu/backups/${BACKUP_NAME} -C /home/ubuntu/test monolithic-litchat && \
+                                        echo "Backup created successfully: /home/ubuntu/backups/${BACKUP_NAME}"
+                                    else
+                                        echo "No existing deployment directory found to back up. Skipping."
+                                    fi
+                                '
+                            '''
+                        }
+            }
+        }
         stage('🌐 Deploy to TEST') {
 
                     steps {
@@ -308,8 +327,6 @@ pipeline {
     }
 
 } 
-
-
 
 ```
 
